@@ -53,18 +53,15 @@ fn build_graph() -> Vec<Vec<Edge>> {
 
 // Find the shortest total distance from `start` to `goal`.
 // Returns None if `goal` can't be reached. 
-fn shortest_distance(graph: &Vec<Vec<Edge>>, start: usize, goal: usize) -> Option<u32> {
+fn shortest_path(graph: &Vec<Vec<Edge>>, start: usize, goal: usize) -> Option<(Vec<usize>, u32)> {
     let n = graph.len();
-
-    // Best know distance from `start` to each node. Start everything at "infinity"
     let mut dist: Vec<u32> = vec![u32::MAX; n];
-    // Whether each node's shortest distance is finalised ("locked in").
     let mut visited: Vec<bool> = vec![false; n];
+    let mut prev: Vec<Option<usize>> = vec![None; n]; // NEW: who we came from
 
-    dist[start] = 0; // we're already at the start: cost 0
+    dist[start] = 0;
 
     loop {
-        // 1. Pick the unvisted node with the smallest known distance.
         let mut current = None;
         let mut best = u32::MAX;
         for node in 0..n {
@@ -74,33 +71,39 @@ fn shortest_distance(graph: &Vec<Vec<Edge>>, start: usize, goal: usize) -> Optio
             }
         }
 
-        // 2. Nothing reachable left? Stop.
         let current = match current {
             Some(node) => node,
-            None => break,
+            None => break
         };
 
-        // 3. Lock in `current` - it's distance is now final.
         visited[current] = true;
         if current == goal {
-            break; // reached the goal; no need to keep going
+            break;
         }
 
-        // 4. Relax each neighbour: is reaching it via `current` cheaper?
         for edge in &graph[current] {
             let new_dist = dist[current] + edge.weight;
             if new_dist < dist[edge.to] {
                 dist[edge.to] = new_dist;
+                prev[edge.to] = Some(current); // NEW: breadcrumb
             }
         }
     }
 
-    // Still infinity => unreachable
     if dist[goal] == u32::MAX {
-        None
-    } else {
-        Some(dist[goal])
+        return None; //unreachable
     }
+
+    // NEW: walk the breadcrumbs backwards from goal to start.
+    let mut path = vec![goal];
+    let mut node = goal;
+    while node != start {
+        node = prev[node].unwrap(); // reachable => has a predecessor
+        path.push(node);
+    }
+    path.reverse(); // we buuilt it goal start; flip it start->goal
+
+    Some((path, dist[goal]))
 }
 
 #[cfg(test)]
@@ -115,9 +118,10 @@ mod tests {
     }
 
     #[test]
-    fn finds_shortest_distance_a_to_c() {
-        let graph = build_graph();
-        // A=0 to C=2: best route is A->D->C = 50+150 = 200
-        assert_eq!(shortest_distance(&graph, 0, 2), Some(200));
-    }
+    fn finds_shortest_path_a_to_c() {
+          let graph = build_graph();
+          // A -> D -> C, total 200m. Nodes by index: A=0, D=3, C=2.
+          assert_eq!(shortest_path(&graph, 0, 2), Some((vec![0, 3, 2], 200)));
+      }
+    
 }

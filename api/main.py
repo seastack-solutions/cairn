@@ -1,10 +1,22 @@
 from fastapi import FastAPI
+from pydantic import BaseModel
 import httpx
 
 app = FastAPI()
 
 # Where the rust engine lives.
 ENGINE_URL = "http://127.0.0.1:9000"
+
+# The shape of a route request - Python's answer to Rust's RouteRequest struct.
+class RouteRequest(BaseModel): # NEW
+    start: int
+    goal:int
+
+@app.post("/plan")
+async def plan(req: RouteRequest):
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(f"{ENGINE_URL}/route", json=req.model_dump())
+    return resp.json()
 
 @app.get("/")
 async def root():

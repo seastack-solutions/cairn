@@ -1,11 +1,14 @@
-use axum::{routing::get, Router};
+use axum::{routing::{get, post}, http::StatusCode, Json, Router};
+use serde::{Deserialize, Serialize};
 
 // An attribute macro. "Transform the thing below at compile time"
 #[tokio::main]
 async fn main() {
     // async marks a function that can be paused while waiting e.g. for the network
     // Build our application: a router that maps URL paths to handler functions.
-    let app = Router::new().route("/", get(hello));
+    let app = Router::new()
+        .route("/", get(hello))
+        .route("/route",post(route));
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:9000")
         .await
@@ -32,6 +35,28 @@ async fn hello() -> &'static str {
 struct Edge {
     to: usize,
     weight: u32,
+}
+
+#[derive(Deserialize)]
+struct RouteRequest {
+    start: usize,
+    goal: usize,
+}
+
+#[derive(Serialize)]
+struct RouteResponse {
+    path: Vec<usize>,
+    distance: u32,
+}
+
+// POST /route handler
+async fn route(Json(req): Json<RouteRequest>) -> Result<Json<RouteResponse>, StatusCode> {
+    let graph = build_graph();
+
+    match shortest_path(&graph, req.start, req.goal) {
+        Some((path, distance)) => Ok(Json(RouteResponse { path, distance})),
+        None => Err(StatusCode::NOT_FOUND), // no route exists
+    }
 }
 
 //Build our 4-node example map. Nodes by index A=0, B=1, C=2, D=3.

@@ -1,14 +1,18 @@
-use axum::{routing::{get, post}, http::StatusCode, Json, Router};
+use axum::{routing::{get, post}, http::StatusCode, extract::State, Json, Router};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 // An attribute macro. "Transform the thing below at compile time"
 #[tokio::main]
 async fn main() {
+
+    let graph = Arc::new(build_graph());
     // async marks a function that can be paused while waiting e.g. for the network
     // Build our application: a router that maps URL paths to handler functions.
     let app = Router::new()
         .route("/", get(hello))
-        .route("/route",post(route));
+        .route("/route",post(route))
+        .with_state(graph);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:9000")
         .await
@@ -50,12 +54,13 @@ struct RouteResponse {
 }
 
 // POST /route handler
-async fn route(Json(req): Json<RouteRequest>) -> Result<Json<RouteResponse>, StatusCode> {
-    let graph = build_graph();
-
+async fn route(
+    State(graph): State<Arc<Vec<Vec<Edge>>>>,
+    Json(req): Json<RouteRequest>,
+) -> Result<Json<RouteResponse>, StatusCode> {
     match shortest_path(&graph, req.start, req.goal) {
-        Some((path, distance)) => Ok(Json(RouteResponse { path, distance})),
-        None => Err(StatusCode::NOT_FOUND), // no route exists
+        Some((path, distance)) => Ok(Json(RouteResponse { path, distance })),
+        None => Err(StatusCode::NOT_FOUND)
     }
 }
 

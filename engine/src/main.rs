@@ -1,6 +1,6 @@
 use axum::{routing::{get, post}, http::StatusCode, extract::State, Json, Router};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 // An attribute macro. "Transform the thing below at compile time"
@@ -24,6 +24,112 @@ async fn main() {
     println!("Cairn engine listening on http://127.0.0.1:9000");
     axum::serve(listener, app).await.unwrap();
 }
+
+// Dijkstra from start to goal, but used segments cost `penalty`x more.
+fn route_avoiding(
+    graph: &Graph,
+    start: usize,
+    goal: usize,
+    used: &HashSet<(usize, usize)>,
+    penalty: u32,
+) -> Option<Vec<usize>> {
+    let n = graph.adjacency.len();
+    let mut dist = vec![u32::MAX; n]; // PENALISED cost from start, not real metres
+    let mut visited = vec![false; n];
+    let mut prev = vec![None; n];
+    dist[start] = 0;
+
+    loop {
+        let mut current = None;
+        let mut best = u32::MAX;
+        for node in 0..n {
+            if !visited[node] && dist[node] < best {
+                best = dist[node];
+                current = Some(node);
+            }
+        }
+        let current = match current {
+            Some(node) => node,
+            None => break,
+        };
+        visited[current] = true;
+        if current == goal {
+            break;
+        }
+        for edge in &graph.adjacency[current] {
+            // a used street still costs it's weight - just multiplied, so it's a last resort
+            let weight = if used.contains(&edge_key(current, edge.to)) {
+                edge.weight * penalty
+            } else {
+                edge.weight
+            };
+            let new_dist = dist[current] + weight;
+            if new_dist < dist[edge.to] {
+                dist[edge.to] = new_dist;
+                prev[edge.to] = Some(current);
+            }
+        }
+    }
+
+    if dist[goal] == u32::MAX {
+        return None;
+    }
+    let mut path = vec![goal];
+    let mut node = goal;
+    while node != start {
+        node = prev[node]?;
+        path.push(node);
+    }
+    path.reverse();
+    Some(path)
+}
+
+fn loop_route(graph: &Graph, start: usize, target_m: u32) -> Option<(Vec<usize>, u32)> {
+    let half = target_m / 2;
+
+    //1. outward distances + best turnaround (~half the target away)
+    let (dist, prev) = distances_from(graph, start);
+    let mut turnaround = None;
+    let mut best_diff = u32::MAX;
+    for node in 0..graph.adjacency.len() {
+        if dist[node] == u32::MAX || node == start {
+            continue;
+        }
+        let diff = dist[node].abs_diff(half);
+        if diff < best_diff {
+            best_diff = diff;
+            turnaround = Some(node);
+        }
+    }
+    let turnaround = turnaround?;
+
+    //2. rebuild the outward path: [start,...,turnaround]
+    let mut out = vec![turnaround];
+    let mut node = turnaround;
+    while node != start {
+        node = prev[node]?;
+        out.push(node);
+    }
+    out.reverse();
+
+    // 3. remember the segments we used going out
+    let mut used = HashSet::new();
+    for pair in out.windows(2) {
+        used.insert(edge_key(pair[0], pair[1]));
+    }
+
+    // 4. come home a different way (used segments penalised 5x)
+    let back = route_avoiding(graph, turnaround, start, &used, 5)?;
+
+    // 5. stitch: outward + return (skip the duplicated turnaround at the join)
+    let mut path = out;
+    path.extend(back.into_iter().skip(1));
+
+    // 6. report the REAL distance of the whole loop
+    let total = path_length(graph, &path);
+    Some((path, total))
+}
+
 
 // A handler: takes no input, returns some text
 // &'static str is the return type
@@ -205,6 +311,24 @@ fn out_and_back(graph: &Graph, start: usize, target_m: u32) -> Option<(Vec<usize
     Some((path, total))
 }
 
+// A street segment, direction-independent: (A, B) and (B, A) map to the same key.
+fn edge_key(a: usize, b: usize) -> (usize, usize) {
+    if a < b { (a, b) } else { (b, a) }
+}
+
+// Real walking distance along a path, summing actual edge weights.
+fn path_length(graph: &Graph, path: &[usize]) -> u32 {
+    let mut total = 0;
+    for pair in path.windows(2) {
+        for edge in &graph.adjacency[pair[0]] {
+            if edge.to == pair[1] {
+                total += edge.weight;
+                break;
+            }
+        }
+    }
+    total
+}
 
 // POST /route handler
 async fn route(
@@ -220,14 +344,20 @@ async fn route(
                 None => Err(StatusCode::NOT_FOUND),
             }
         }
-       RouteRequest::OutAndBack { start, target_m } => {
+        RouteRequest::OutAndBack { start, target_m } => {
             let s = nearest_node(&graph, start);
             match out_and_back(&graph, s, target_m) {
                 Some((indices, distance)) => Ok(Json(to_response(&graph, indices, distance))),
                 None => Err(StatusCode::NOT_FOUND),
             }
         }
-        RouteRequest::Loop { .. } => Err(StatusCode::NOT_IMPLEMENTED),
+        RouteRequest::Loop { start, target_m } => {
+              let s = nearest_node(&graph, start);
+              match loop_route(&graph, s, target_m) {
+                  Some((indices, distance)) => Ok(Json(to_response(&graph, indices, distance))),
+                  None => Err(StatusCode::NOT_FOUND),
+              }
+          }
     }
 }
 

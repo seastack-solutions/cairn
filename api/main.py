@@ -12,10 +12,20 @@ class RouteRequest(BaseModel): # NEW
     start: int
     goal:int
 
+class Coord(BaseModel):
+    lat: float
+    lon: float
+
+class RouteRequest(BaseModel):
+    mode: str
+    start: Coord
+    goal: Coord | None = None
+    target_m: int | None = None
+
 @app.post("/plan")
 async def plan(req: RouteRequest):
     async with httpx.AsyncClient() as client:
-        resp = await client.post(f"{ENGINE_URL}/route", json=req.model_dump())
+        resp = await client.post(f"{ENGINE_URL}/route", json=req.model_dump(exclude_none=True))
     return resp.json()
 
 @app.get("/")
